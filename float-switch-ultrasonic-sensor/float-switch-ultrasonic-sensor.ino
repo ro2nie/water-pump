@@ -55,6 +55,10 @@ void reconnect() {
     if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       client.subscribe("water-tank/status");
+
+      client.publish("water-pump/controller/status", "OFF");
+      delay(500);
+      client.publish("water-pump/controller/status", "ON");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -91,6 +95,7 @@ void loop() {
       Serial.print("Pump OFF at: " + String(timeStopped) + "\n");
       digitalWrite(LED_BUILTIN, HIGH);
       client.publish("water-pump/status", "OFF");
+      client.publish("water-well/time", String(minuteCountdown).c_str());
       //TODO: Deactivate relay switch
     }
   }
