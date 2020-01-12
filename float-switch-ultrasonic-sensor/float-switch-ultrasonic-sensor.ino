@@ -10,12 +10,13 @@ const char* mqttServer = "<enter MQTT IP address/domain>";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-const int PUMP_DELAY_START = 10000; //Debounce for when well signals enough water. Pump needs to wait or else it wil stop/start in quick succession.
+const int PUMP_DELAY_START = 120000; //Debounce for when well signals enough water. Pump needs to wait or else it wil stop/start in quick succession.
 //TODO consider passing PUMP_DELAY_START as an MQTT message. This would allow for OpenHab to change it in summer/winter (when less/more water) with Astro.
 unsigned long timeStopped = 0;
 unsigned long timeStarted = 0;
 bool pumpState = false;
 String waterTankIntent = "OFF";
+int minuteCountdown = 0;
 
 void setup_wifi() {
   delay(10);
@@ -113,7 +114,16 @@ void loop() {
           Serial.print("Pump ON at: " + String(timeStarted) + "\n");
           digitalWrite(LED_BUILTIN, LOW);
           client.publish("water-pump/status", "ON");
+          client.publish("water-well/time", String(minuteCountdown).c_str());
           //TODO: Activate relay switch
+        } else { //Send how long it will be until pump started every minute
+          int timeToWait = ((PUMP_DELAY_START-(timeStarted - timeStopped)) / 60000);
+          if (timeToWait != minuteCountdown) {
+            minuteCountdown = timeToWait;
+            String countdown = String(minuteCountdown + 1);
+            Serial.println("Starting in: " + countdown + " minutes");
+            client.publish("water-well/time", countdown.c_str());            
+          }
         }
       }
     }
