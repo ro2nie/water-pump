@@ -19,11 +19,11 @@ String delayStart = "";
 int delayStartInt = 1800000; //Half hr - Debounce for when well signals enough water. Pump needs to wait or else it wil stop/start in quick succession.
 int minuteCountdown = 0;
 
-const char* timeToWaitTopic = "water-well/time-to-wait";
+const char* timeToWaitTopic = "water-well/recovery-time";
 const char* waterTankIntentTopic = "water-tank/status";
 const char* waterPumpStatusTopic = "water-pump/status";
-const char* waterPumpControllerStatusTopic = "water-pump/controller/status";
-const char* waterWellTimeTopic = "water-well/time";
+const char* waterPumpOnlineTopic = "water-pump/online";
+const char* waterWellTimeTopic = "water-well/recovery-countdown";
 
 void setupWifi() {
   delay(10);
@@ -54,6 +54,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
       delayStart += (char)payload[i];
     }
     delayStartInt = delayStart.toInt() * 60000;
+    Serial.println("Time to start" + String(delayStartInt));
+
     client.publish(waterWellTimeTopic, delayStart.c_str());
     Serial.println("Received " + String(timeToWaitTopic) + " " + delayStart);
   }
@@ -71,9 +73,12 @@ void reconnect() {
       Serial.println("connected");
       client.subscribe(waterTankIntentTopic);
       client.subscribe(timeToWaitTopic);
-      client.publish(waterPumpControllerStatusTopic, "OFF");
+      client.publish(waterPumpOnlineTopic, "OFF");
       delay(500);
-      client.publish(waterPumpControllerStatusTopic, "ON");
+      client.publish(waterPumpOnlineTopic, "ON");
+
+      Serial.println("About to set initial waiting time");
+      client.publish(timeToWaitTopic, String(delayStartInt/60000).c_str());
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -94,8 +99,6 @@ void setup() {
   setupWifi();
   client.setServer(mqttServer, 1883);
   client.setCallback(callback);
-  Serial.println("About to set initial waiting time");
-  client.publish(waterWellTimeTopic, delayStart.c_str());
 }
 
 void loop() {
