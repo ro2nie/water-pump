@@ -7,6 +7,8 @@ const int RELAY_SWITCH = 5;
 const char* ssid = "<enter WiFi SSID here>";
 const char* password = "<enter WiFi WPA/WPA2 secret here>";
 const char* mqttServer = "<enter MQTT IP address/domain>";
+const char* mqttUser = "<enter MQTT username>";
+const char* mqttPassword = "<enter MQTT password>";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -18,11 +20,13 @@ String waterTankIntent = "OFF";
 String delayStart = "";
 int delayStartInt = 1800000; //Half hr - Debounce for when well signals enough water. Pump needs to wait or else it wil stop/start in quick succession.
 int minuteCountdown = 0;
+unsigned long recordSeconds = 0;
+int keepAliveInterval = 5000;
 
 const char* timeToWaitTopic = "water-well/recovery-time";
 const char* waterTankIntentTopic = "water-tank/status";
 const char* waterPumpStatusTopic = "water-pump/status";
-const char* waterPumpOnlineTopic = "water-pump/online";
+const char* waterPumpAvailabilityTopic = "water-pump/availability";
 const char* waterWellTimeTopic = "water-well/recovery-countdown";
 
 void setupWifi() {
@@ -41,7 +45,9 @@ void setupWifi() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [" + String(topic) + "]");
+  Serial.println("Message arrived [" + String(topic) + "]");
+  Serial.println(timeToWaitTopic);
+  Serial.println(topic);
   if (strcmp(topic, waterTankIntentTopic) == 0) {
     waterTankIntent = "";
     for (int i = 0; i < length; i++) {
@@ -54,10 +60,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
       delayStart += (char)payload[i];
     }
     delayStartInt = delayStart.toInt() * 60000;
-    Serial.println("Time to start" + String(delayStartInt));
+    Serial.println("Time to start " + String(delayStartInt));
 
     client.publish(waterWellTimeTopic, delayStart.c_str());
     Serial.println("Received " + String(timeToWaitTopic) + " " + delayStart);
+
+    //Reset last time stopped to now
+    timeStopped = millis();
+    timeStarted = 0;
+    minuteCountdown = 0;
+    if (pumpState) {  //And if the pump is already running. Stop it.      
+      setPumpState(false, String(delayStart));
+    }
   }
 }
 
@@ -69,16 +83,12 @@ void reconnect() {
     String clientId = "ESP8266Client-";
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
-    if (client.connect(clientId.c_str())) {
+    if (client.connect(clientId.c_str(), mqttUser, mqttPassword)) {
       Serial.println("connected");
       client.subscribe(waterTankIntentTopic);
       client.subscribe(timeToWaitTopic);
-      client.publish(waterPumpOnlineTopic, "OFF");
-      delay(500);
-      client.publish(waterPumpOnlineTopic, "ON");
-
       Serial.println("About to set initial waiting time");
-      client.publish(timeToWaitTopic, String(delayStartInt/60000).c_str());
+      client.publish(timeToWaitTopic, String(delayStartInt / 60000).c_str());
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -106,7 +116,12 @@ void loop() {
     reconnect();
   }
   client.loop();
+  
+  keepAlive();
+  calculatePumpState();
+}
 
+void calculatePumpState() {
   if (digitalRead(WELL_LEVEL_SENSOR) == HIGH)  //If the water well level is low
   {
     timeStopped = millis();
@@ -122,7 +137,7 @@ void loop() {
       if (waterTankIntent == "OFF" || waterTankIntent != "ON") { //Water tank is full. If anything else other than "ON or OFF" is sent. Switch off
         setPumpState(false, "0");
       }
-    } else { //if pump not running
+    } else { //if pump not running      
       if ((timeStarted - timeStopped) >= delayStartInt) { //And the delay counter is over, then switch pump on
         if (waterTankIntent == "ON") { //Water tank is empty
           setPumpState(true, "0");
@@ -140,6 +155,7 @@ void loop() {
 }
 
 void setPumpState(bool state, String wellTimeToRecover) {
+  Serial.println("STATE " + String(state));
   pumpState = state;
   const String stateStr = state ? "ON" : "OFF";
   Serial.println("Pump " + stateStr);
@@ -147,4 +163,12 @@ void setPumpState(bool state, String wellTimeToRecover) {
   client.publish(waterPumpStatusTopic, stateStr.c_str());
   client.publish(waterWellTimeTopic, wellTimeToRecover.c_str());
   digitalWrite(RELAY_SWITCH, (state ? HIGH : LOW));
+}
+
+void keepAlive() {
+   if ((millis() - recordSeconds) >= keepAliveInterval) {
+    Serial.println("Send MQTT keepalive");
+    client.publish(waterPumpAvailabilityTopic, "ON");
+    recordSeconds = millis();
+  }
 }
